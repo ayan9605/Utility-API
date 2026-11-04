@@ -1,9 +1,11 @@
 import io
+import warnings
 from typing import List, Optional
 import pymupdf
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
-from PIL import Image, ImageOps, UnidentifiedImageError, DecompressionBombError
+from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL.Image import DecompressionBombError, DecompressionBombWarning
 
 app = FastAPI(title="Lightweight AI Image & PDF Utility API", version="2.3")
 
@@ -32,10 +34,10 @@ def validate_image_bytes(image_bytes: bytes):
         
         # Localized warning checking for decompression bombs
         with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always", Image.DecompressionBombWarning)
+            warnings.simplefilter("always", DecompressionBombWarning)
             img_check.verify()
             for warning in w:
-                if issubclass(warning.category, Image.DecompressionBombWarning):
+                if issubclass(warning.category, DecompressionBombWarning):
                     raise HTTPException(status_code=400, detail="Image exceeds maximum allowable pixel limits (Decompression Bomb detected).")
     except DecompressionBombError:
         raise HTTPException(status_code=400, detail="Image exceeds maximum allowable pixel limits.")
@@ -74,11 +76,9 @@ async def resize_image(
 
         # Resizing execution with explicit fit semantics and dimension clamping
         if width and height:
-            # Enforce maximum dimension bounds for 'outside' or arbitrary scaling calculations
             if fit_mode == "fill":
                 target_w, target_h = width, height
             elif fit_mode == "contain":
-                # Contain: Resizes onto a fixed-size background canvas matching target dimensions
                 img.thumbnail((width, height), Image.Resampling.LANCZOS)
                 new_w, new_h = img.size
                 canvas = Image.new(img.mode if img.mode in ["RGB", "RGBA"] else "RGB", (width, height), (255, 255, 255) if img.mode != "RGBA" else (255, 255, 255, 0))
@@ -91,12 +91,10 @@ async def resize_image(
                 img = ImageOps.fit(img, (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
                 target_w, target_h = width, height
             elif fit_mode == "inside":
-                # Inside: Fit within dimensions without enlarging
                 target_w = min(width, orig_w)
                 target_h = min(height, orig_h)
                 img.thumbnail((target_w, target_h), Image.Resampling.LANCZOS)
             elif fit_mode == "outside":
-                # Outside: Cover dimensions without cropping, enforcing dimension check limits
                 ratio = max(width / orig_w, height / orig_h)
                 target_w = int(orig_w * ratio)
                 target_h = int(orig_h * ratio)
@@ -104,7 +102,6 @@ async def resize_image(
                     raise HTTPException(status_code=400, detail=f"Calculated outside dimensions exceed max limit of {MAX_IMAGE_DIMENSION}px.")
                 img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
         elif width:
-            # Single-dimension resizing preserves aspect ratio (documented behavior)
             aspect_ratio = int(width * (orig_h / orig_w))
             if width > MAX_IMAGE_DIMENSION or aspect_ratio > MAX_IMAGE_DIMENSION:
                 raise HTTPException(status_code=400, detail=f"Dimensions exceed max limit of {MAX_IMAGE_DIMENSION}px.")
@@ -303,10 +300,10 @@ async def images_to_pdf(
                 if img_check.width > MAX_IMAGE_DIMENSION or img_check.height > MAX_IMAGE_DIMENSION:
                     raise HTTPException(status_code=400, detail=f"Image {file.filename} exceeds max dimensions.")
                 with warnings.catch_warnings(record=True) as w:
-                    warnings.simplefilter("always", Image.DecompressionBombWarning)
+                    warnings.simplefilter("always", DecompressionBombWarning)
                     img_check.verify()
                     for warning in w:
-                        if issubclass(warning.category, Image.DecompressionBombWarning):
+                        if issubclass(warning.category, DecompressionBombWarning):
                             raise HTTPException(status_code=400, detail="Image exceeds maximum allowable pixel limits.")
             except DecompressionBombError:
                 raise HTTPException(status_code=400, detail="Image exceeds maximum allowable pixel limits.")
@@ -334,7 +331,6 @@ async def images_to_pdf(
             
             if p_size in PAGE_SIZES:
                 base_pw, base_ph = PAGE_SIZES[p_size]
-                # Automatic landscape orientation for landscape images
                 if img.width > img.height:
                     pw, ph = max(base_pw, base_ph), min(base_pw, base_ph)
                 else:
